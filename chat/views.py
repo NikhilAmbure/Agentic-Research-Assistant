@@ -8,8 +8,6 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from agent import agent_graph
 
-
-
 # Helpers
 def extract_tools_used(messages: list) -> list[str]:
     """Return deduplicated list of tool names used in this invocation."""
@@ -19,15 +17,12 @@ def extract_tools_used(messages: list) -> list[str]:
             seen.append(msg.name)
     return seen
 
-
 def parse_body(request) -> dict:
     """Parse JSON request body safely."""
     try:
         return json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
         return {}
-
-
 
 # POST /api/chat/  — standard request / response
 @method_decorator(csrf_exempt, name="dispatch")
@@ -60,7 +55,6 @@ class ChatView(View):
             "session_id": session_id,
             "tools_used": tools_used,
         })
-
 
 # POST /api/chat/stream/  — Server-Sent Events
 @method_decorator(csrf_exempt, name="dispatch")
@@ -127,7 +121,6 @@ class ChatStreamView(View):
         response["X-Accel-Buffering"] = "no"
         return response
 
-
 # GET /api/history/<session_id>/
 class HistoryView(View):
 
@@ -157,15 +150,12 @@ class HistoryView(View):
             "session_id": session_id,
         })
 
-
-
 # GET /api/health/
-
 class HealthView(View):
 
     def get(self, request):
         return JsonResponse({
             "status": "running",
-            "agent": "Multi-Tool AI Agent",
-            "tools": ["web_search", "calculator", "python_executor", "file_reader"],
+            "agent": "Research Agent",
+            "tools": ["web_search"],
         })

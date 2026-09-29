@@ -5,4 +5,11 @@ from pydantic import BaseModel
 
 
 class AgentState(BaseModel):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
+    # topic: str
+    # research_tasks: str
+    # sources: str
+    # findings: list
+    messages: Annotated[
+        Sequence[BaseMessage],
+        add_messages
+    ]

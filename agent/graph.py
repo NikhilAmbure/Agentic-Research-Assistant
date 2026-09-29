@@ -1,49 +1,55 @@
 import os
 
 from langchain_core.messages import SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
-from langchain_groq import ChatGroq
-
+from langchain_google_genai import ChatGoogleGenerativeAI
 from .state import AgentState
 from .tools import tools
 
-# graph.py
+RESEARCHER_SYSTEM_PROMPT = """
+You are a research agent.
 
-SYSTEM_PROMPT = """You are a helpful AI assistant with access to these tools:
+Your responsibility is to investigate a research topic using
+the web_search tool.
 
-- web_search: Search the internet for real-time information
-- calculator: Evaluate mathematical expressions  
-- python_executor: Run Python code
-- file_reader: Read local text files
+You should:
+1. Identify what information is needed.
+2. Search for relevant sources.
+3. Examine the search results.
+4. Perform additional searches when the evidence is insufficient.
+5. Prefer reliable and relevant sources.
+6. Separate factual findings from assumptions.
+7. Produce concise research notes with source URLs.
 
-Always use the appropriate tool when needed. /no_think
+Do not write the final polished report.
+Your job is to gather evidence for downstream agents.
 """
 
 def _get_llm():
-    llm = ChatGroq(
-        model="qwen/qwen3-32b",
-        api_key=os.getenv("GROQ_API_KEY", ""),
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash-lite",
+        api_key=os.getenv("GEMINI_API_KEY", ""),
         temperature=0,
         max_retries=2,
     )
+
     return llm.bind_tools(tools)
 
-
-# Nodes 
-
+# Nodes
 def agent_node(state: AgentState):
     """Call the LLM with bound tools."""
     llm = _get_llm()
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(state.messages)
+    messages = [
+        SystemMessage(content=RESEARCHER_SYSTEM_PROMPT)
+    ] + list(state.messages)
+
     response = llm.invoke(messages)
     return {"messages": [response]}
 
 
-#Router 
-
+# Router
 def should_continue(state: AgentState) -> str:
     """Route to tool node if LLM made a tool call, otherwise end."""
     last = state.messages[-1]
@@ -67,13 +73,14 @@ def build_graph():
     graph.add_conditional_edges(
         "agent",
         should_continue,
-        {"tools": "tools", END: END},
+        {
+            "tools": "tools",
+            END: END
+        },
     )
     graph.add_edge("tools", "agent")
 
     memory = MemorySaver()
     return graph.compile(checkpointer=memory)
 
-
-# Compiled once at import time
 agent_graph = build_graph()
