@@ -1,30 +1,14 @@
 import os
 
-from langchain_core.tools import tool
-from langchain_tavily import TavilySearch
+from dotenv import load_dotenv
+from tavily import TavilyClient
 
-tavily = TavilySearch(api_key=os.getenv("TAVILY_API_KEY", ""))
+load_dotenv()
+_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
-@tool
-def web_search(query: str) -> str:
-    """Search the web for current, real-time information using Tavily."""
-    try:
-        result = tavily.invoke({"query": query})
-        
-        if isinstance(result, list):
-            results = []
-
-            for r in result:
-                results.append(
-                    f"Source: {r.get('url')}\n"
-                    f"Content: {r.get('content')}\n"
-                )
-
-            return "\n\n".join(results)
-
-        return str(result)
-
-    except Exception as e:
-        return f"Search error: {str(e)}"
-
-tools = [web_search]
+def search_web(query: str, max_results: int = 4) -> list[dict]:
+    res = _client.search(query=query, max_results=max_results)
+    return [
+        {"url": r["url"], "title": r["title"], "content": r["content"]}
+        for r in res["results"]
+    ]

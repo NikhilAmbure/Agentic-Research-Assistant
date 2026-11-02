@@ -1,86 +1,116 @@
-import os
-
-from langchain_core.messages import SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
+from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from .state import AgentState
-from .tools import tools
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+from langgraph.types import Send
+from .state import AppState
+from collections import defaultdict
+from .tools import search_web
+from langchain_groq import ChatGroq
 
-RESEARCHER_SYSTEM_PROMPT = """
-You are a research agent.
+load_dotenv()
+# llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_output_tokens=8192)
+llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    temperature=0
+)
 
-Your responsibility is to investigate a research topic using
-the web_search tool.
-
-You should:
-1. Identify what information is needed.
-2. Search for relevant sources.
-3. Examine the search results.
-4. Perform additional searches when the evidence is insufficient.
-5. Prefer reliable and relevant sources.
-6. Separate factual findings from assumptions.
-7. Produce concise research notes with source URLs.
-
-Do not write the final polished report.
-Your job is to gather evidence for downstream agents.
-"""
-
-def _get_llm():
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite",
-        api_key=os.getenv("GEMINI_API_KEY", ""),
-        temperature=0,
-        max_retries=2,
+class Plan(BaseModel):
+    subtasks: list[str] = Field(
+        description="4-6 distinct, specific, searchable research questions"
     )
 
-    return llm.bind_tools(tools)
+class InsightItem(BaseModel):
+    claim: str = Field(description="One specific, self-contained factual claim")
+    source_url: str = Field(description="Exactly one of the provided source URLs")
 
-# Nodes
-def agent_node(state: AgentState):
-    """Call the LLM with bound tools."""
-    llm = _get_llm()
-    messages = [
-        SystemMessage(content=RESEARCHER_SYSTEM_PROMPT)
-    ] + list(state.messages)
-
-    response = llm.invoke(messages)
-    return {"messages": [response]}
+class Analysis(BaseModel):
+    insights: list[InsightItem] = Field(description="At most 8 key insights")
 
 
-# Router
-def should_continue(state: AgentState) -> str:
-    """Route to tool node if LLM made a tool call, otherwise end."""
-    last = state.messages[-1]
-    if hasattr(last, "tool_calls") and last.tool_calls:
-        return "tools"
-    return END
+analyst_llm = llm.with_structured_output(Analysis)
 
 
-# Graph
+def fan_out(state: AppState):
+    return [Send("researcher", {"subtask": st}) for st in state["subtasks"]]
 
-def build_graph():
-    tool_node = ToolNode(tools)
 
-    graph = StateGraph(AgentState)
-    graph.add_node("agent", agent_node)
-    graph.add_node("tools", tool_node)
-
-    graph.set_entry_point("agent")
-
-    # ReAct loop: agent → (tools → agent)* → END
-    graph.add_conditional_edges(
-        "agent",
-        should_continue,
-        {
-            "tools": "tools",
-            END: END
-        },
+def orchestrator(state: AppState) -> dict:
+    planner = llm.with_structured_output(Plan)
+    plan = planner.invoke(
+        f"Break this topic into 4-6 distinct research subtasks:\n{state['topic']}"
     )
-    graph.add_edge("tools", "agent")
+    return {"subtasks": plan.subtasks}
 
-    memory = MemorySaver()
-    return graph.compile(checkpointer=memory)
 
-agent_graph = build_graph()
+def researcher(payload: dict) -> dict:
+    subtask = payload["subtask"]
+    return {"sources": [{"subtask": subtask, **r} for r in search_web(subtask)]}
+
+
+def analyst(state: AppState) -> dict:
+    by_subtask = defaultdict(list)
+    for s in state["sources"]:
+        by_subtask[s["subtask"]].append(s)
+
+    subtasks = list(by_subtask)
+    prompts = []
+    for st in subtasks:
+        ctx = "\n\n".join(f"URL: {s['url']}\n{s['content']}" for s in by_subtask[st])
+        prompts.append(
+            f"Research question: {st}\n\n"
+            "Extract at most 8 key factual claims that help answer it. Each claim "
+            "must be specific, self-contained, and stated in the source you cite. "
+            "Skip fluff.\n\n" + ctx
+        )
+
+    results = analyst_llm.batch(
+        prompts, config={"max_concurrency": 3}, return_exceptions=True
+    )
+
+    insights = []
+    for st, res in zip(subtasks, results):
+        if isinstance(res, Exception):
+            print(f"[analyst] skipped subtask after error: {st[:60]}... ({res})")
+            continue
+        valid_urls = {s["url"] for s in by_subtask[st]}
+        for item in res.insights:
+            if item.source_url in valid_urls:
+                insights.append(
+                    {"subtask": st, "claim": item.claim, "source_url": item.source_url}
+                )
+    return {"insights": insights}
+
+
+def writer(state: AppState) -> dict:
+    urls = list(dict.fromkeys(i["source_url"] for i in state["insights"]))
+    idx = {u: n for n, u in enumerate(urls, 1)}
+    facts = "\n".join(
+        f"- ({i['subtask']}) {i['claim']} [{idx[i['source_url']]}]"
+        for i in state["insights"]
+    )
+    refs = "\n".join(f"[{n}] {u}" for u, n in idx.items())
+    prompt = (
+        f"Write a structured research report on: {state['topic']}\n\n"
+        "Use ONLY the facts below. Include a title, executive summary, one "
+        "section per theme, and keep the [n] citation after each claim. "
+        "End with a References section.\n\n"
+        f"FACTS:\n{facts}\n\nREFERENCES:\n{refs}"
+    )
+    return {"draft": llm.invoke(prompt).content}
+
+
+
+builder = StateGraph(AppState)
+builder.add_node("orchestrator", orchestrator)
+builder.add_node("researcher", researcher)
+builder.add_node("analyst", analyst)
+builder.add_node("writer", writer)
+
+builder.add_edge(START, "orchestrator")
+builder.add_conditional_edges("orchestrator", fan_out, ["researcher"])
+builder.add_edge("researcher", "analyst")
+builder.add_edge("analyst", "writer")
+builder.add_edge("writer", END)
+
+graph = builder.compile()

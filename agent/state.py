@@ -1,15 +1,23 @@
-from typing import Annotated, Sequence
-from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
-from pydantic import BaseModel
+import operator
+from typing import Annotated, TypedDict
 
 
-class AgentState(BaseModel):
-    # topic: str
-    # research_tasks: str
-    # sources: str
-    # findings: list
-    messages: Annotated[
-        Sequence[BaseMessage],
-        add_messages
-    ]
+class Source(TypedDict):
+    subtask: str
+    url: str
+    title: str
+    content: str
+
+
+class Insight(TypedDict):
+    subtask: str
+    claim: str
+    source_url: str
+
+class AppState(TypedDict, total=False):
+    topic: str
+    subtasks: list[str]
+    sources: Annotated[list[Source], operator.add]
+    insights: list[Insight]
+    draft: str
+
