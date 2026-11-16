@@ -1,11 +1,33 @@
 # Agentic Research Assistant
 
-A multi-agent system that researches a topic on the live web and delivers a **cited, fact-checked report**, with a human approval gate before anything is finalised. Built with LangGraph.
+An autonomous, multi-agent research and synthesis engine built with **LangGraph**, **Tavily**, and **GPT-4o-mini**. It decomposes complex topics, retrieves live web evidence in parallel, extracts verifiable atomic claims, synthesizes structured reports, and performs sentence-level automated fact-checking with surgical revision and a human-in-the-loop approval gate.
 
-Writing a comprehensive report by hand takes hours, and a single LLM call lacks depth, cross-referencing, and trustworthy citations. This project splits the job across specialised agents. Each has one responsibility and produces output that the next step can check.
+---
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
+[![OpenAI](https://img.shields.io/badge/LLM-GPT--4o--mini-green.svg)](https://platform.openai.com/)
+[![Tavily](https://img.shields.io/badge/search-Tavily%20AI-purple.svg)](https://tavily.com/)
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [What it does](#what-it-does)
+- [Workflow](#workflow)
+- [Agents and nodes](#agents-and-nodes)
+- [Design decisions](#design-decisions)
+- [Getting started](#getting-started)
+- [Project structure](#project-structure)
+- [Tech stack](#tech-stack)
+- [Roadmap](#roadmap)
+- [Known limitations](#known-limitations)
+
+---
 
 ## What it does
-
+ 
 - Breaks a topic into 4-6 focused research questions
 - Searches the web for each question **in parallel** (Tavily)
 - Extracts atomic claims, each tied to the exact source URL it came from
@@ -13,6 +35,9 @@ Writing a comprehensive report by hand takes hours, and a single LLM call lacks 
 - Fact-checks every sentence against the source it cites, and patches only the sentences that fail
 - Pauses for human approval; rejecting with feedback sends the draft back to the writer
 - Screens the input topic, scraped web content, and the final output with guardrails
+
+---
+
 
 ## Workflow
 
@@ -88,21 +113,6 @@ Feedback: Shorten the executive summary to 3 sentences
 ```
 
 A rejection triggers a rewrite and a fresh fact-check, then returns you to the gate. Approving ends the run.
-
-To drive the graph from your own code:
-
-```python
-from langgraph.types import Command
-from agent.graph import graph
-
-config = {"configurable": {"thread_id": "demo-1"}}   # use a fresh id per topic
-out = graph.invoke({"topic": "Impact of AI agents on software engineering jobs"}, config)
-
-# The graph is now paused at the gate:
-# out["__interrupt__"][0].value -> {"draft", "warnings", "unresolved_issues"}
-
-out = graph.invoke(Command(resume={"action": "approve"}), config)
-```
 
 Each run uses roughly 4-6 Tavily searches, so keep the free tier's monthly limit in mind.
 

@@ -367,4 +367,8 @@ builder.add_conditional_edges("fact_checker", after_check, ["reviser", "output_g
 builder.add_edge("reviser", "fact_checker")
 builder.add_edge("output_guard", "human_gate")
 
-graph = builder.compile(checkpointer=MemorySaver())
+
+def build_graph(checkpointer):
+    return builder.compile(checkpointer=checkpointer)
+
+graph = build_graph(MemorySaver()) 
