@@ -16,6 +16,7 @@ An autonomous, multi-agent research and synthesis engine built with **LangGraph*
 - [Overview](#overview)
 - [What it does](#what-it-does)
 - [Workflow](#workflow)
+- [REST API](#rest-api)
 - [Agents and nodes](#agents-and-nodes)
 - [Design decisions](#design-decisions)
 - [Getting started](#getting-started)
@@ -70,6 +71,40 @@ flowchart TD
 ```
 
 Purple nodes are LLM agents, green nodes are tool steps with no LLM, and orange nodes are guardrails or the human gate. All nodes read and write one shared LangGraph state (`AppState`).
+
+## REST API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/research/` | Start a run with `{"topic": "..."}`; returns a `thread_id` immediately (202) |
+| `GET /api/research/<id>/` | Status: `queued`, `running`, `awaiting_review`, `approved`, `blocked`, or `failed` |
+| `POST /api/research/<id>/review/` | `{"action": "approve"}` or `{"action": "reject", "feedback": "..."}` |
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Django API
+    participant R as Redis
+    participant W as Celery worker
+    participant G as LangGraph + Postgres
+
+    C->>A: POST /api/research/ with topic
+    A->>R: enqueue run_research
+    A-->>C: 202 + thread_id
+    R->>W: deliver task
+    W->>G: invoke graph (thread_id)
+    G-->>W: pauses at human gate
+    C->>A: GET /api/research/{id}/
+    A->>G: read checkpoint
+    A-->>C: awaiting_review + draft
+    C->>A: POST /review/ approve or reject
+    A->>R: enqueue resume_research
+    R->>W: deliver task
+    W->>G: resume with decision
+    G-->>W: finished, or back to the gate
+    C->>A: GET /api/research/{id}/
+    A-->>C: approved + report
+```
 
 ## Agents and nodes
 
@@ -132,13 +167,14 @@ test.py                       # interactive CLI runner
 
 Python, LangGraph, LangChain, OpenAI (`gpt-4o-mini`), Tavily Search API, Pydantic, Django and Django REST Framework.
 
+
 ## Roadmap
 
 - [x] Multi-agent graph with parallel web research
 - [x] Input, source, and output guardrails
 - [x] Sentence-level fact-checking with a surgical revision loop
 - [x] Human approval gate with feedback loop
-- [ ] REST API (DRF + Celery) with Postgres-backed checkpoints
+- [x] REST API (DRF + Celery) with Postgres-backed checkpoints
 - [ ] Section-level parallel writing and checking to cut latency
 - [ ] Shared memory across runs (Mem0)
 

@@ -1,3 +1,6 @@
+# get_graph() builds the graph with the Postgres checkpointer, 
+# and research_status() reads the checkpoint
+
 import os
 from functools import lru_cache
 
